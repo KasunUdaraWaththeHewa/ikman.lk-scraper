@@ -1,86 +1,103 @@
 import requests
 from bs4 import BeautifulSoup
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from typing import List, Dict
 
-# Step 1: Fetch categories from the API
-category_api_url = 'https://ikman.lk/data/categories/en'
-category_response = requests.get(category_api_url)
+app = FastAPI()
 
-# Check if the category request was successful
-if category_response.status_code == 200:
-    categories = category_response.json()  # Parse JSON response
-else:
-    print(f"Failed to retrieve categories. Status code: {category_response.status_code}")
-    categories = {}
 
-# Display available categories
-print("Available Categories:")
-for category_id, category_info in categories.items():
-    print(f"{category_id}: {category_info['name']}")
+# Define a model for the response of ads
+class Ad(BaseModel):
+    title: str
+    link: str
+    price: str
+    location: str
 
-# Select a category ID dynamically (you can modify this part based on your needs)
-selected_category_id = input("Enter the category ID you want to scrape (e.g., '391' for Vehicles): ")
 
-# Step 2: Construct the base URL using the selected category ID
-base_url = f'https://ikman.lk/en/ads/sri-lanka/{categories[selected_category_id]["slug"]}?sort=date&order=desc&buy_now=0&urgent=0&page='
+# Define a model for the response of categories
+class Category(BaseModel):
+    id: int
+    slug: str
+    name: str
 
-# Initialize a page number variable
-page_number = 1
 
-# Step 3: Loop until there are no more ads to scrape
-while True:
-    # Create the complete URL for the current page
-    url = f'{base_url}{page_number}'
+# API endpoint to fetch categories
+@app.get('/api/categories', response_model=List[Category])
+def get_categories():
+    category_api_url = 'https://ikman.lk/data/categories/en'
+    category_response = requests.get(category_api_url)
 
-    # Send a GET request to fetch the raw HTML content
-    response = requests.get(url)
+    if category_response.status_code == 200:
+        # Parse the response as JSON
+        categories = category_response.json()
 
-    # Check if the request was successful
-    if response.status_code == 200:
-        # Parse the HTML content using BeautifulSoup
+        # Create a list to store filtered categories
+        filtered_categories = []
+
+        for category_id, category_data in categories.items():
+            # Extract 'id', 'slug', and 'name' from each category
+            filtered_categories.append({
+                'id': category_data.get('id'),
+                'slug': category_data.get('slug'),
+                'name': category_data.get('name')
+            })
+
+        return filtered_categories
+    else:
+        raise HTTPException(status_code=category_response.status_code, detail="Failed to retrieve categories")
+
+# API endpoint to scrape advertisements based on the selected category_ID
+@app.post('/api/scrape_ads', response_model=List[Ad])
+def scrape_ads(category_slug: str):
+    # Construct the base URL using the provided category slug
+    base_url = f'https://ikman.lk/en/ads/sri-lanka/{category_slug}?sort=date&order=desc&buy_now=0&urgent=0&page='
+    print(base_url)
+
+    page_number = 1
+    ads_list = []
+
+    # Loop until there are no more ads to scrape
+    while True:
+        url = f'{base_url}{page_number}'
+        response = requests.get(url)
+
+        if response.status_code != 200:
+            raise HTTPException(status_code=response.status_code, detail="Failed to retrieve the webpage")
+
         soup = BeautifulSoup(response.content, 'html.parser')
-
-        # Find all the advertisement containers (li elements)
         ad_containers = soup.find_all('li', class_=['top-ads-container--1Jeoq', 'normal--2QYVk'])
 
-        # If there are no ads, break the loop
         if not ad_containers:
-            break
+            break  # Exit loop if no more ads
 
-        # Loop through each ad container and extract the details
         for ad in ad_containers:
-            # Get the title of the car
-            title = ad.find('h2', class_='heading--2eONR')
-            if title:
-                title = title.text.strip()
-            else:
-                continue  # Skip if title not found
+            title_tag = ad.find('h2', class_='heading--2eONR')
+            link_tag = ad.find('a', class_='card-link--3ssYv')
+            price_tag = ad.find('div', class_='price--3SnqI')
+            location_tag = ad.find('div', class_='description--2-ez3')
 
-            # Get the URL of the car ad
-            link = ad.find('a', class_='card-link--3ssYv')['href']
+            if not (title_tag and link_tag and price_tag and location_tag):
+                continue  # Skip ads with missing data
 
-            # Get the price of the car
-            price = ad.find('div', class_='price--3SnqI')
-            if price:
-                price = price.text.strip()
-            else:
-                continue  # Skip if price not found
+            title = title_tag.text.strip()
+            link = link_tag['href']
+            price = price_tag.text.strip()
+            location = location_tag.text.strip()
 
-            # Get the location of the car
-            location = ad.find('div', class_='description--2-ez3')
-            if location:
-                location = location.text.strip()
-            else:
-                continue  # Skip if location not found
+            ads_list.append(Ad(
+                title=title,
+                link=f'https://ikman.lk{link}',
+                price=price,
+                location=location
+            ))
 
-            # Print the extracted details
-            print(f'Title: {title}')
-            print(f'Link: https://ikman.lk{link}')
-            print(f'Price: {price}')
-            print(f'Location: {location}')
-            print('-' * 50)
-
-        # Increment the page number for the next iteration
         page_number += 1
-    else:
-        print(f"Failed to retrieve the webpage. Status code: {response.status_code}")
-        break
+
+    return ads_list
+
+
+if __name__ == '__main__':
+    import uvicorn
+
+    uvicorn.run(app, host='0.0.0.0', port=8000)
