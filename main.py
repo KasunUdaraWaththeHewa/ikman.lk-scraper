@@ -1,13 +1,32 @@
 import requests
 from bs4 import BeautifulSoup
 
-# Base URL of the page you want to scrape
-base_url = 'https://ikman.lk/en/ads/sri-lanka/cars?sort=date&order=desc&buy_now=0&urgent=0&page='
+# Step 1: Fetch categories from the API
+category_api_url = 'https://ikman.lk/data/categories/en'
+category_response = requests.get(category_api_url)
+
+# Check if the category request was successful
+if category_response.status_code == 200:
+    categories = category_response.json()  # Parse JSON response
+else:
+    print(f"Failed to retrieve categories. Status code: {category_response.status_code}")
+    categories = {}
+
+# Display available categories
+print("Available Categories:")
+for category_id, category_info in categories.items():
+    print(f"{category_id}: {category_info['name']}")
+
+# Select a category ID dynamically (you can modify this part based on your needs)
+selected_category_id = input("Enter the category ID you want to scrape (e.g., '391' for Vehicles): ")
+
+# Step 2: Construct the base URL using the selected category ID
+base_url = f'https://ikman.lk/en/ads/sri-lanka/{categories[selected_category_id]["slug"]}?sort=date&order=desc&buy_now=0&urgent=0&page='
 
 # Initialize a page number variable
 page_number = 1
 
-# Loop until there are no more ads to scrape
+# Step 3: Loop until there are no more ads to scrape
 while True:
     # Create the complete URL for the current page
     url = f'{base_url}{page_number}'
